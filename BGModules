@@ -1,0 +1,170 @@
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
+local RS = game:GetService("ReplicatedStorage")
+
+local defaultSoundTrack = script.Default
+
+local bgObjectValue = RS:WaitForChild("GameInfo"):WaitForChild("BGObject")
+
+local BGMManager = {}
+
+local playlist = {}
+local currentIndex = 1
+local volume = 0.35
+local currentSound = nil
+local isPaused = false
+
+function BGMManager.FadeOutAndDestroy(sound, duration)
+	if not sound or not sound.Parent then return end
+	local tween = TweenService:Create(sound, TweenInfo.new(duration), {Volume = 0})
+	tween:Play()
+	tween.Completed:Connect(function()
+		sound:Destroy()
+	end)
+end
+
+function BGMManager.Init(newPlaylist: {number}, defaultVolume: number?)
+	playlist = newPlaylist or {}
+	volume = defaultVolume or volume
+	currentIndex = 1
+end
+
+function BGMManager.SetVolume(newVolume: number)
+	volume = math.clamp(newVolume, 0, 1)
+	if currentSound and currentSound.Parent then
+		currentSound.Volume = volume
+	end
+end
+
+BGMManager.setVolume = BGMManager.SetVolume
+
+function BGMManager.PlaySoundTrackFromFolder(soundFolder: Folder)
+	if not soundFolder then return end
+
+	local extractedPlaylist = {}
+	for _, child in ipairs(soundFolder:GetChildren()) do
+		if child:IsA("Sound") then
+			local idStr = child.SoundId:match("%d+")
+			if idStr then
+				table.insert(extractedPlaylist, tonumber(idStr) or idStr)
+			end
+		end
+	end
+
+	if #extractedPlaylist > 0 then
+		BGMManager.Init(extractedPlaylist, volume)
+		BGMManager.PlayTrack(playlist[currentIndex])
+	else
+		warn("BGMManager: No valid Sound instances found in folder: " .. tostring(soundFolder.Name))
+	end
+end
+
+function BGMManager.Pause()
+	if isPaused then return end
+	isPaused = true
+
+	if currentSound and currentSound.Parent then
+
+		local tween = TweenService:Create(currentSound, TweenInfo.new(1), {Volume = 0})
+		tween:Play()
+		tween.Completed:Connect(function()
+			if isPaused and currentSound then
+				currentSound:Pause()
+			end
+		end)
+	end
+end
+
+function BGMManager.Resume()
+	if not isPaused then return end
+	isPaused = false
+
+	if currentSound and currentSound.Parent then
+		currentSound:Resume()
+		local tween = TweenService:Create(currentSound, TweenInfo.new(1), {Volume = volume})
+		tween:Play()
+	else
+		if #playlist > 0 then
+			BGMManager.PlayTrack(playlist[currentIndex])
+		else
+			BGMManager.resetSoundTrack()
+		end
+	end
+end
+
+function BGMManager.resetSoundTrack()
+	currentIndex = 1
+	if defaultSoundTrack and defaultSoundTrack:IsA("Folder") then
+		BGMManager.PlaySoundTrackFromFolder(defaultSoundTrack)
+	end
+end
+
+function BGMManager.PlayTrack(soundId: number)
+	if currentSound then
+		BGMManager.FadeOutAndDestroy(currentSound, 1.5)
+	end
+
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://" .. tostring(soundId)
+	sound.Volume = 0
+	sound.Looped = false
+	sound.Parent = SoundService
+
+	sound:Play()
+	currentSound = sound
+
+	local tween = TweenService:Create(sound, TweenInfo.new(1.5), {Volume = volume})
+	tween:Play()
+
+	sound.Ended:Connect(function()
+		if currentSound == sound and not isPaused then
+			BGMManager.NextTrack()
+		end
+	end)
+end
+
+function BGMManager.NextTrack()
+	if #playlist == 0 then return end
+	currentIndex = currentIndex + 1
+	if currentIndex > #playlist then
+		currentIndex = 1
+	end
+	BGMManager.PlayTrack(playlist[currentIndex])
+end
+
+local function handleMusicChange(val)
+	if val == "Default" or val == nil or val == "" then
+		BGMManager.resetSoundTrack()
+		return
+	end
+
+	if typeof(val) == "Instance" then
+		if val:IsA("Folder") then
+			BGMManager.PlaySoundTrackFromFolder(val)
+		elseif val:IsA("Sound") then
+			local idStr = val.SoundId:match("%d+")
+			if idStr then
+				BGMManager.PlayTrack(tonumber(idStr) or idStr)
+			end
+		end
+	elseif type(val) == "number" then
+		BGMManager.PlayTrack(val)
+	elseif type(val) == "string" then
+		local numId = tonumber(val:match("%d+"))
+		if numId then
+			BGMManager.PlayTrack(numId)
+		else
+			BGMManager.resetSoundTrack()
+		end
+	else
+		BGMManager.resetSoundTrack()
+	end
+end
+
+bgObjectValue.Changed:Connect(function(newValue)
+	handleMusicChange(newValue)
+end)
+
+handleMusicChange(bgObjectValue.Value)
+
+return BGMManager
